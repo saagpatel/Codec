@@ -45,6 +45,46 @@ pub struct FlowBatch {
     pub stats: CaptureStats,
 }
 
+/// Topology node returned by get_topology.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopologyNode {
+    pub id: String,
+    pub label: String,
+    pub node_type: String, // "device" | "service" | "router"
+    pub icon: String,
+    pub total_bytes: u64,
+}
+
+/// Topology edge returned by get_topology.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TopologyEdge {
+    pub source: String,
+    pub target: String,
+    pub protocol: String,
+    pub bytes: u64,
+    pub active: bool,
+}
+
+/// Per-device statistics returned by get_device_stats.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceStats {
+    pub device_id: i64,
+    pub total_bytes_sent: u64,
+    pub total_bytes_received: u64,
+    pub flow_count: u64,
+    pub protocol_breakdown: Vec<ProtocolShare>,
+    pub first_seen: String,
+    pub last_seen: String,
+}
+
+/// Protocol percentage in a device's traffic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolShare {
+    pub protocol: String,
+    pub bytes: u64,
+    pub percentage: f64,
+}
+
 /// Messages sent from the helper to the main app over the Unix socket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
