@@ -61,11 +61,12 @@ pub struct DeviceHint {
 }
 
 /// Messages sent from the main app to the helper (control commands).
+/// Every message must include the IPC auth token generated at install time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlMessage {
-    SetArpSpoof { enabled: bool },
-    Shutdown,
+    SetArpSpoof { token: String, enabled: bool },
+    Shutdown { token: String },
 }
 
 #[cfg(test)]
@@ -131,14 +132,21 @@ mod tests {
 
     #[test]
     fn control_message_serialization() {
-        let msg = ControlMessage::SetArpSpoof { enabled: true };
+        let msg = ControlMessage::SetArpSpoof {
+            token: "abc123".to_string(),
+            enabled: true,
+        };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("set_arp_spoof"));
         assert!(json.contains("true"));
+        assert!(json.contains("abc123"));
 
         let parsed: ControlMessage = serde_json::from_str(&json).unwrap();
         match parsed {
-            ControlMessage::SetArpSpoof { enabled } => assert!(enabled),
+            ControlMessage::SetArpSpoof { token, enabled } => {
+                assert!(enabled);
+                assert_eq!(token, "abc123");
+            }
             _ => panic!("expected SetArpSpoof"),
         }
     }

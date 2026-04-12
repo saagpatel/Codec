@@ -59,14 +59,14 @@ async fn main() {
     tokio::spawn(async move {
         while let Some(msg) = control_rx.recv().await {
             match msg {
-                ControlMessage::SetArpSpoof { enabled } => {
+                ControlMessage::SetArpSpoof { enabled, .. } => {
                     if enabled {
                         arp_engine.start();
                     } else {
                         arp_engine.stop();
                     }
                 }
-                ControlMessage::Shutdown => {
+                ControlMessage::Shutdown { .. } => {
                     info!("Shutdown command received");
                     break;
                 }

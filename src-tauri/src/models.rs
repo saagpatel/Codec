@@ -54,10 +54,11 @@ pub enum HelperMessage {
 }
 
 /// Messages sent from the main app to the helper (control commands).
+/// Every message must include the IPC auth token generated at connection time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(dead_code)] // Used in Phase 1 for ARP spoof toggle
 pub enum ControlMessage {
-    SetArpSpoof { enabled: bool },
-    Shutdown,
+    SetArpSpoof { token: String, enabled: bool },
+    Shutdown { token: String },
 }

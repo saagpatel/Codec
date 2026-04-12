@@ -2,6 +2,7 @@ use crate::capture::device_registry;
 use crate::models::{ControlMessage, FlowBatch, HelperMessage};
 use crate::{DbPool, OuiDb};
 use log::{error, info, warn};
+use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -10,8 +11,48 @@ use tokio::net::UnixStream;
 use tokio::sync::Mutex;
 
 const SOCKET_PATH: &str = "/tmp/codec-helper.sock";
+const TOKEN_PATH: &str = "/Library/Application Support/com.codec.app/ipc-token";
 const MAX_RETRIES: u32 = 3;
 const BASE_RETRY_DELAY: Duration = Duration::from_secs(2);
+
+/// Generate or load the IPC auth token.
+///
+/// On first call: generates 32 random bytes, hex-encodes them to a 64-char string,
+/// stores at TOKEN_PATH (mode 0o600), and returns the token.
+/// On subsequent calls: reads and returns the existing token.
+pub fn ensure_ipc_token() -> Result<String, Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let token_path = std::path::Path::new(TOKEN_PATH);
+
+    if token_path.exists() {
+        let contents = std::fs::read_to_string(token_path)?;
+        let token = contents.trim().to_string();
+        if token.len() == 64 {
+            return Ok(token);
+        }
+        warn!("Existing IPC token at {} is malformed (len={}); regenerating", TOKEN_PATH, token.len());
+    }
+
+    // Create parent directory with restrictive permissions
+    if let Some(parent) = token_path.parent() {
+        std::fs::create_dir_all(parent)?;
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+    }
+
+    // Generate 32 random bytes from /dev/urandom
+    let mut rng = std::fs::File::open("/dev/urandom")?;
+    let mut raw = [0u8; 32];
+    rng.read_exact(&mut raw)?;
+    let token: String = raw.iter().map(|b| format!("{:02x}", b)).collect();
+
+    // Write with owner-read-only permissions
+    std::fs::write(token_path, &token)?;
+    std::fs::set_permissions(token_path, std::fs::Permissions::from_mode(0o600))?;
+
+    info!("IPC token generated and stored at {}", TOKEN_PATH);
+    Ok(token)
+}
 
 /// Shared sender for pushing ControlMessages to the helper.
 /// Held as None when the helper is disconnected.

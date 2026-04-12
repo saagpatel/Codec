@@ -49,10 +49,11 @@ pub fn start_capture(tx: mpsc::Sender<RawPacket>) -> Result<String, CaptureError
         .open()
         .map_err(|e| CaptureError::OpenFailed(e.to_string()))?;
 
-    // Only capture IP traffic (skip ARP, etc. at the BPF level)
-    if let Err(e) = cap.filter("ip or ip6", true) {
-        warn!("Failed to set BPF filter: {} — capturing all traffic", e);
-    }
+    // Only capture IP traffic (skip ARP, etc. at the BPF level).
+    // Abort if the filter cannot be set — falling back to unfiltered capture
+    // would expose all local traffic to the helper process.
+    cap.filter("ip or ip6", true)
+        .map_err(|e| CaptureError::OpenFailed(format!("Failed to set BPF filter: {}", e)))?;
 
     let name = device_name.clone();
     std::thread::Builder::new()

@@ -382,10 +382,11 @@ pub fn toggle_device_visibility(
 
 /// Delete flow summaries older than `retention_days`. Returns number of rows deleted.
 pub fn purge_old_flows(conn: &Connection, retention_days: i64) -> Result<usize, rusqlite::Error> {
-    let threshold = format!("datetime('now', '-{} days')", retention_days);
+    // Use parameterized binding: concatenate the interval string inside SQLite so the
+    // retention_days value is bound as a parameter, never interpolated into the SQL text.
     let n = conn.execute(
-        &format!("DELETE FROM flow_summaries WHERE last_seen < {threshold}"),
-        [],
+        "DELETE FROM flow_summaries WHERE last_seen < datetime('now', '-' || ?1 || ' days')",
+        params![retention_days],
     )?;
     Ok(n)
 }

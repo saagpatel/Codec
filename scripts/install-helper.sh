@@ -8,6 +8,8 @@ HELPER_SRC="${1:-src-tauri/target/debug/codec-helper}"
 HELPER_DST="/Library/PrivilegedHelperTools/com.codec.helper"
 PLIST_DST="/Library/LaunchDaemons/com.codec.helper.plist"
 SOCKET_PATH="/tmp/codec-helper.sock"
+LOG_DIR="/Library/Logs/com.codec.helper"
+LOG_PATH="${LOG_DIR}/codec-helper.log"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Error: This script must be run as root (sudo)"
@@ -25,6 +27,12 @@ if launchctl list | grep -q com.codec.helper; then
     echo "Stopping existing helper service..."
     launchctl unload "$PLIST_DST" 2>/dev/null || true
 fi
+
+# Create log directory with restricted permissions (root-only, not world-readable)
+echo "Creating log directory at $LOG_DIR..."
+mkdir -p "$LOG_DIR"
+chmod 700 "$LOG_DIR"
+chown root:wheel "$LOG_DIR"
 
 # Install binary
 echo "Installing helper binary to $HELPER_DST..."
@@ -51,9 +59,9 @@ cat > "$PLIST_DST" << 'PLIST'
     <key>KeepAlive</key>
     <true/>
     <key>StandardErrorPath</key>
-    <string>/tmp/codec-helper.log</string>
+    <string>/Library/Logs/com.codec.helper/codec-helper.log</string>
     <key>StandardOutPath</key>
-    <string>/tmp/codec-helper.log</string>
+    <string>/Library/Logs/com.codec.helper/codec-helper.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>RUST_LOG</key>
@@ -72,5 +80,5 @@ launchctl load -w "$PLIST_DST"
 
 echo "Done. Helper service is running."
 echo "Check status: sudo launchctl list | grep codec"
-echo "Check logs: tail -f /tmp/codec-helper.log"
+echo "Check logs: sudo tail -f $LOG_PATH"
 echo "Test socket: nc -U $SOCKET_PATH"
