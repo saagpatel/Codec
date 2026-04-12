@@ -1,6 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { CaptureStats, Device, FlowSummary, IconKey } from "../types";
+import type {
+	CaptureStats,
+	Device,
+	DeviceStats,
+	FlowSummary,
+	IconKey,
+	TopologyEdge,
+	TopologyNode,
+} from "../types";
 
 // --- Wire format types (what Rust actually sends) ---
 
@@ -172,5 +180,48 @@ export async function toggleDeviceVisibility(
 		await invoke("toggle_device_visibility", { id, visible });
 	} catch (e) {
 		console.error("toggle_device_visibility failed:", e);
+	}
+}
+
+export async function getTopology(
+	windowSecs?: number,
+): Promise<[TopologyNode[], TopologyEdge[]]> {
+	try {
+		return await invoke<[TopologyNode[], TopologyEdge[]]>("get_topology", {
+			windowSecs: windowSecs ?? 60,
+		});
+	} catch (e) {
+		console.error("get_topology failed:", e);
+		return [[], []];
+	}
+}
+
+export async function getDeviceStats(
+	deviceId: number,
+): Promise<DeviceStats | null> {
+	try {
+		return await invoke<DeviceStats>("get_device_stats", { deviceId });
+	} catch (e) {
+		console.error("get_device_stats failed:", e);
+		return null;
+	}
+}
+
+export async function queryHistory(
+	start: string,
+	end: string,
+	deviceId?: number,
+	limit?: number,
+): Promise<FlowSummary[]> {
+	try {
+		return await invoke<FlowSummary[]>("query_history", {
+			start,
+			end,
+			deviceId: deviceId ?? null,
+			limit: limit ?? 500,
+		});
+	} catch (e) {
+		console.error("query_history failed:", e);
+		return [];
 	}
 }

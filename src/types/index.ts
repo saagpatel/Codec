@@ -66,8 +66,10 @@ export interface FlowBatch {
 export interface TopologyNode {
 	id: string;
 	label: string;
-	type: "device" | "service" | "router";
-	device?: Device;
+	node_type: "device" | "service" | "router";
+	icon: string;
+	total_bytes: number;
+	// D3 simulation fields (added at runtime)
 	x?: number;
 	y?: number;
 	fx?: number | null;
@@ -75,11 +77,27 @@ export interface TopologyNode {
 }
 
 export interface TopologyEdge {
-	source: string;
-	target: string;
+	source: string | TopologyNode;
+	target: string | TopologyNode;
 	protocol: Protocol;
 	bytes: number;
 	active: boolean;
+}
+
+export interface ProtocolShare {
+	protocol: string;
+	bytes: number;
+	percentage: number;
+}
+
+export interface DeviceStats {
+	device_id: number;
+	total_bytes_sent: number;
+	total_bytes_received: number;
+	flow_count: number;
+	protocol_breakdown: ProtocolShare[];
+	first_seen: string;
+	last_seen: string;
 }
 
 export interface HistoryQuery {
@@ -87,3 +105,5 @@ export interface HistoryQuery {
 	start: string;
 	end: string;
 }
+
+export type ViewTab = "conversations" | "topology" | "history";
