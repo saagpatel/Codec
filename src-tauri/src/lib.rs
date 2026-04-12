@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex};
 
 pub type DbPool = Arc<Mutex<rusqlite::Connection>>;
 pub type OuiDb = Arc<HashMap<[u8; 3], String>>;
+/// The IPC auth token shared between the main app and the privileged helper.
+pub type IpcToken = Arc<String>;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -47,6 +49,13 @@ pub fn run() {
                 .unwrap_or_else(|_| std::path::PathBuf::from("assets/oui.csv"));
             let oui_db: OuiDb = Arc::new(capture::device_registry::load_oui(&oui_path));
             log::info!("Loaded {} OUI entries", oui_db.len());
+
+            // Generate or load the IPC auth token and expose it as managed state.
+            let ipc_token: IpcToken = Arc::new(
+                capture::helper_client::ensure_ipc_token()
+                    .map_err(|e| format!("Failed to establish IPC token: {}", e))?,
+            );
+            app.manage(ipc_token.clone());
 
             // Create control sender — allows commands to send messages to the helper
             let control: capture::helper_client::ControlSender =

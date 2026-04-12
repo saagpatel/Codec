@@ -1,6 +1,6 @@
 use crate::capture::helper_client::ControlSender;
 use crate::models::ControlMessage;
-use crate::DbPool;
+use crate::{DbPool, IpcToken};
 use tauri::State;
 
 #[tauri::command]
@@ -23,6 +23,7 @@ pub async fn update_setting(
     value: String,
     db: State<'_, DbPool>,
     control: State<'_, ControlSender>,
+    ipc_token: State<'_, IpcToken>,
 ) -> Result<(), String> {
     // Persist to DB
     let db = db.inner().clone();
@@ -37,13 +38,14 @@ pub async fn update_setting(
     .map_err(|e| format!("Task failed: {e}"))?;
     db_result?;
 
-    // If ARP spoof toggled, send ControlMessage to helper
+    // If ARP spoof toggled, send authenticated ControlMessage to helper
     if key == "arp_spoof_enabled" {
         let enabled = value == "true";
+        let token = ipc_token.as_ref().clone();
         let guard = control.lock().await;
         if let Some(tx) = guard.as_ref() {
             if let Err(e) = tx
-                .send(ControlMessage::SetArpSpoof { enabled })
+                .send(ControlMessage::SetArpSpoof { token, enabled })
                 .await
             {
                 log::warn!("Failed to send ARP spoof control message: {}", e);
