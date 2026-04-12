@@ -21,6 +21,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::flows::get_recent_flows,
             commands::flows::get_devices,
+            commands::flows::get_topology,
+            commands::flows::get_device_stats,
+            commands::flows::query_history,
             commands::settings::get_settings,
             commands::settings::update_setting,
             commands::settings::rename_device,

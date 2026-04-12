@@ -1,4 +1,6 @@
-use crate::models::{DeviceEntry, FlowEntry};
+use crate::models::{
+    DeviceEntry, DeviceStats, FlowEntry, ProtocolShare, TopologyEdge, TopologyNode,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -380,6 +382,315 @@ pub fn toggle_device_visibility(
     Ok(())
 }
 
+/// Build topology graph from recent flows (last `window_secs` seconds).
+/// Devices become nodes, unique service_names become service nodes,
+/// flows become edges grouped by (src_node, dst_node, protocol).
+pub fn get_topology(
+    conn: &Connection,
+    window_secs: i64,
+) -> Result<(Vec<TopologyNode>, Vec<TopologyEdge>), rusqlite::Error> {
+    let mut nodes: Vec<TopologyNode> = Vec::new();
+    let mut node_ids: HashMap<String, usize> = HashMap::new();
+
+    // 1) Device nodes — all visible devices
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, mac_address, display_name, hostname, oui_manufacturer,
+                    device_type, icon, ip_address
+             FROM devices
+             WHERE is_visible = 1
+             ORDER BY last_seen DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let _id: i64 = row.get(0)?;
+            let mac: String = row.get(1)?;
+            let display_name: Option<String> = row.get(2)?;
+            let hostname: Option<String> = row.get(3)?;
+            let oui: Option<String> = row.get(4)?;
+            let device_type: String = row.get(5)?;
+            let icon: String = row.get(6)?;
+            let ip: Option<String> = row.get(7)?;
+
+            let label = display_name
+                .or(hostname)
+                .or(oui)
+                .or(ip)
+                .unwrap_or_else(|| mac.clone());
+
+            let node_type = if device_type == "Router" {
+                "router".to_string()
+            } else {
+                "device".to_string()
+            };
+
+            Ok((mac, label, node_type, icon))
+        })?;
+
+        for row in rows {
+            let (mac, label, node_type, icon) = row?;
+            let node_id = format!("dev:{}", mac);
+            node_ids.insert(node_id.clone(), nodes.len());
+            nodes.push(TopologyNode {
+                id: node_id,
+                label,
+                node_type,
+                icon,
+                total_bytes: 0,
+            });
+        }
+    }
+
+    // 2) Query recent flows to build edges and service nodes
+    let mut edge_map: HashMap<(String, String, String), (u64, String)> = HashMap::new();
+    {
+        let active_threshold: String =
+            conn.query_row("SELECT datetime('now', '-10 seconds')", [], |row| {
+                row.get(0)
+            })?;
+
+        let mut stmt = conn.prepare(
+            "SELECT f.src_ip, f.dst_ip, f.protocol, f.service_name,
+                    f.bytes_sent, f.bytes_received, f.last_seen,
+                    sd.mac_address AS src_mac
+             FROM flow_summaries f
+             LEFT JOIN devices sd ON sd.id = f.src_device_id
+             WHERE f.last_seen >= datetime('now', '-' || ?1 || ' seconds')",
+        )?;
+
+        let rows = stmt.query_map(params![window_secs], |row| {
+            Ok((
+                row.get::<_, String>(0)?,         // src_ip
+                row.get::<_, String>(1)?,         // dst_ip
+                row.get::<_, String>(2)?,         // protocol
+                row.get::<_, Option<String>>(3)?, // service_name
+                row.get::<_, i64>(4)? as u64,     // bytes_sent
+                row.get::<_, i64>(5)? as u64,     // bytes_received
+                row.get::<_, String>(6)?,         // last_seen
+                row.get::<_, Option<String>>(7)?, // src_mac
+            ))
+        })?;
+
+        for row in rows {
+            let (
+                src_ip,
+                dst_ip,
+                protocol,
+                service_name,
+                bytes_sent,
+                bytes_received,
+                last_seen,
+                src_mac,
+            ) = row?;
+            let total = bytes_sent + bytes_received;
+
+            let src_node_id = if let Some(ref mac) = src_mac {
+                format!("dev:{}", mac)
+            } else {
+                format!("ip:{}", src_ip)
+            };
+
+            let service_label = service_name.unwrap_or_else(|| dst_ip.clone());
+            let dst_node_id = format!("svc:{}", service_label);
+
+            // Ensure service node exists
+            if !node_ids.contains_key(&dst_node_id) {
+                node_ids.insert(dst_node_id.clone(), nodes.len());
+                nodes.push(TopologyNode {
+                    id: dst_node_id.clone(),
+                    label: service_label,
+                    node_type: "service".to_string(),
+                    icon: "globe".to_string(),
+                    total_bytes: 0,
+                });
+            }
+
+            // Ensure unknown-IP source node exists
+            if !node_ids.contains_key(&src_node_id) {
+                node_ids.insert(src_node_id.clone(), nodes.len());
+                nodes.push(TopologyNode {
+                    id: src_node_id.clone(),
+                    label: src_ip,
+                    node_type: "device".to_string(),
+                    icon: "device".to_string(),
+                    total_bytes: 0,
+                });
+            }
+
+            if let Some(&idx) = node_ids.get(&src_node_id) {
+                nodes[idx].total_bytes += total;
+            }
+            if let Some(&idx) = node_ids.get(&dst_node_id) {
+                nodes[idx].total_bytes += total;
+            }
+
+            let edge_key = (src_node_id, dst_node_id, protocol);
+            let entry = edge_map.entry(edge_key).or_insert((0, String::new()));
+            entry.0 += total;
+            if last_seen > entry.1 {
+                entry.1 = last_seen;
+            }
+        }
+
+        // Convert edge_map to TopologyEdge vec
+        let edges: Vec<TopologyEdge> = edge_map
+            .into_iter()
+            .map(|((source, target, protocol), (bytes, last_seen))| {
+                let active = last_seen >= active_threshold;
+                TopologyEdge {
+                    source,
+                    target,
+                    protocol,
+                    bytes,
+                    active,
+                }
+            })
+            .collect();
+
+        return Ok((nodes, edges));
+    }
+}
+
+/// Per-device traffic statistics.
+pub fn get_device_stats(conn: &Connection, device_id: i64) -> Result<DeviceStats, rusqlite::Error> {
+    let (total_sent, total_received, flow_count, first_seen, last_seen): (
+        i64,
+        i64,
+        i64,
+        String,
+        String,
+    ) = conn.query_row(
+        "SELECT COALESCE(SUM(f.bytes_sent), 0),
+                    COALESCE(SUM(f.bytes_received), 0),
+                    COUNT(*),
+                    COALESCE(MIN(f.first_seen), ''),
+                    COALESCE(MAX(f.last_seen), '')
+             FROM flow_summaries f
+             WHERE f.src_device_id = ?1 OR f.dst_device_id = ?1",
+        params![device_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+
+    let mut stmt = conn.prepare(
+        "SELECT f.protocol, SUM(f.bytes_sent + f.bytes_received) as total
+         FROM flow_summaries f
+         WHERE f.src_device_id = ?1 OR f.dst_device_id = ?1
+         GROUP BY f.protocol
+         ORDER BY total DESC",
+    )?;
+
+    let grand_total = (total_sent + total_received) as f64;
+
+    let protocol_rows = stmt.query_map(params![device_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
+    })?;
+
+    let mut protocol_breakdown = Vec::new();
+    for row in protocol_rows {
+        let (protocol, bytes) = row?;
+        let percentage = if grand_total > 0.0 {
+            (bytes as f64 / grand_total) * 100.0
+        } else {
+            0.0
+        };
+        protocol_breakdown.push(ProtocolShare {
+            protocol,
+            bytes,
+            percentage,
+        });
+    }
+
+    Ok(DeviceStats {
+        device_id,
+        total_bytes_sent: total_sent as u64,
+        total_bytes_received: total_received as u64,
+        flow_count: flow_count as u64,
+        protocol_breakdown,
+        first_seen,
+        last_seen,
+    })
+}
+
+/// Query flow history with optional device and time range filters.
+pub fn query_history(
+    conn: &Connection,
+    device_id: Option<i64>,
+    start: &str,
+    end: &str,
+    limit: u32,
+) -> Result<Vec<Value>, rusqlite::Error> {
+    let base_select = "SELECT
+            f.id, f.flow_key, f.src_ip, f.dst_ip, f.src_port, f.dst_port,
+            f.protocol, f.service_name,
+            f.bytes_sent, f.bytes_received, f.packet_count,
+            f.first_seen, f.last_seen, f.summary_text,
+            sd.mac_address, sd.display_name, sd.device_type, sd.icon,
+            dd.mac_address, dd.display_name, dd.device_type, dd.icon
+         FROM flow_summaries f
+         LEFT JOIN devices sd ON sd.id = f.src_device_id
+         LEFT JOIN devices dd ON dd.id = f.dst_device_id";
+
+    let row_mapper = |row: &rusqlite::Row<'_>| {
+        Ok(json!({
+            "id": row.get::<_, i64>(0)?,
+            "flow_key": row.get::<_, String>(1)?,
+            "src_ip": row.get::<_, String>(2)?,
+            "dst_ip": row.get::<_, String>(3)?,
+            "src_port": row.get::<_, Option<i64>>(4)?,
+            "dst_port": row.get::<_, Option<i64>>(5)?,
+            "protocol": row.get::<_, String>(6)?,
+            "service_name": row.get::<_, Option<String>>(7)?,
+            "bytes_sent": row.get::<_, i64>(8)?,
+            "bytes_received": row.get::<_, i64>(9)?,
+            "packet_count": row.get::<_, i64>(10)?,
+            "first_seen": row.get::<_, String>(11)?,
+            "last_seen": row.get::<_, String>(12)?,
+            "summary_text": row.get::<_, Option<String>>(13)?,
+            "src_device": {
+                "mac_address": row.get::<_, Option<String>>(14)?,
+                "display_name": row.get::<_, Option<String>>(15)?,
+                "device_type": row.get::<_, Option<String>>(16)?,
+                "icon": row.get::<_, Option<String>>(17)?
+            },
+            "dst_device": {
+                "mac_address": row.get::<_, Option<String>>(18)?,
+                "display_name": row.get::<_, Option<String>>(19)?,
+                "device_type": row.get::<_, Option<String>>(20)?,
+                "icon": row.get::<_, Option<String>>(21)?
+            }
+        }))
+    };
+
+    if let Some(dev_id) = device_id {
+        let sql = format!(
+            "{} WHERE f.last_seen >= ?1 AND f.last_seen <= ?2 AND (f.src_device_id = ?3 OR f.dst_device_id = ?3) ORDER BY f.last_seen DESC LIMIT ?4",
+            base_select
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let results: Result<Vec<Value>, rusqlite::Error> = stmt
+            .query_map(params![start, end, dev_id, limit], row_mapper)?
+            .collect();
+        results
+    } else {
+        let sql = format!(
+            "{} WHERE f.last_seen >= ?1 AND f.last_seen <= ?2 ORDER BY f.last_seen DESC LIMIT ?3",
+            base_select
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let results: Result<Vec<Value>, rusqlite::Error> = stmt
+            .query_map(params![start, end, limit], row_mapper)?
+            .collect();
+        results
+    }
+}
+
 /// Delete flow summaries older than `retention_days`. Returns number of rows deleted.
 pub fn purge_old_flows(conn: &Connection, retention_days: i64) -> Result<usize, rusqlite::Error> {
     // Use parameterized binding: concatenate the interval string inside SQLite so the
@@ -394,7 +705,6 @@ pub fn purge_old_flows(conn: &Connection, retention_days: i64) -> Result<usize, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::schema::init_db;
     use crate::models::{DeviceEntry, FlowEntry};
 
     fn setup() -> Connection {
@@ -636,5 +946,467 @@ mod tests {
         let flows = get_recent_flows(&conn, 10).unwrap();
         assert_eq!(flows.len(), 1);
         assert_eq!(flows[0]["flow_key"], "test:192.168.0.5->8.8.8.8:53");
+    }
+
+    // --- Topology tests ---
+
+    /// Insert a flow with CURRENT_TIMESTAMP so it appears in get_topology's time window.
+    fn insert_recent_flow(
+        conn: &Connection,
+        key: &str,
+        src_ip: &str,
+        dst_ip: &str,
+        protocol: &str,
+        service: Option<&str>,
+        bytes_sent: i64,
+        bytes_recv: i64,
+    ) {
+        let src_dev = device_id_for_ip(conn, src_ip);
+        let dst_dev = device_id_for_ip(conn, dst_ip);
+        conn.execute(
+            "INSERT INTO flow_summaries
+                (flow_key, src_ip, dst_ip, protocol, service_name,
+                 src_device_id, dst_device_id,
+                 bytes_sent, bytes_received, packet_count,
+                 first_seen, last_seen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            params![
+                key, src_ip, dst_ip, protocol, service, src_dev, dst_dev, bytes_sent, bytes_recv
+            ],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_get_topology_returns_device_nodes() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        let d2 = make_device("aa:bb:cc:00:00:02", Some("192.168.1.20"));
+        upsert_device(&conn, &d1).unwrap();
+        upsert_device(&conn, &d2).unwrap();
+
+        let (nodes, _edges) = get_topology(&conn, 3600).unwrap();
+        let device_nodes: Vec<_> = nodes.iter().filter(|n| n.node_type == "device").collect();
+        assert!(
+            device_nodes.len() >= 2,
+            "should have at least 2 device nodes"
+        );
+    }
+
+    #[test]
+    fn test_get_topology_creates_service_nodes_from_flows() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        upsert_device(&conn, &d1).unwrap();
+
+        insert_recent_flow(
+            &conn,
+            "f1",
+            "192.168.1.10",
+            "17.253.144.10",
+            "TLS",
+            Some("icloud.com"),
+            5000,
+            10000,
+        );
+        insert_recent_flow(
+            &conn,
+            "f2",
+            "192.168.1.10",
+            "8.8.8.8",
+            "DNS",
+            Some("dns.google"),
+            100,
+            200,
+        );
+
+        let (nodes, edges) = get_topology(&conn, 3600).unwrap();
+        let svc_nodes: Vec<_> = nodes.iter().filter(|n| n.node_type == "service").collect();
+        assert_eq!(
+            svc_nodes.len(),
+            2,
+            "should have 2 service nodes (icloud.com, dns.google)"
+        );
+        assert!(edges.len() >= 2, "should have at least 2 edges");
+    }
+
+    #[test]
+    fn test_get_topology_accumulates_bytes_on_nodes() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        upsert_device(&conn, &d1).unwrap();
+
+        insert_recent_flow(
+            &conn,
+            "f1",
+            "192.168.1.10",
+            "1.1.1.1",
+            "TLS",
+            Some("example.com"),
+            1000,
+            2000,
+        );
+        insert_recent_flow(
+            &conn,
+            "f2",
+            "192.168.1.10",
+            "1.1.1.2",
+            "TLS",
+            Some("example.com"),
+            500,
+            500,
+        );
+
+        let (nodes, _edges) = get_topology(&conn, 3600).unwrap();
+        let dev = nodes
+            .iter()
+            .find(|n| n.id == "dev:aa:bb:cc:00:00:01")
+            .unwrap();
+        assert_eq!(dev.total_bytes, 4000, "device node bytes should accumulate");
+
+        let svc = nodes.iter().find(|n| n.id == "svc:example.com").unwrap();
+        assert_eq!(
+            svc.total_bytes, 4000,
+            "service node bytes should accumulate"
+        );
+    }
+
+    #[test]
+    fn test_get_topology_hidden_devices_excluded() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        let id = upsert_device(&conn, &d1).unwrap();
+        toggle_device_visibility(&conn, id, false).unwrap();
+
+        let (nodes, _) = get_topology(&conn, 3600).unwrap();
+        let dev_nodes: Vec<_> = nodes
+            .iter()
+            .filter(|n| n.id == "dev:aa:bb:cc:00:00:01")
+            .collect();
+        assert!(
+            dev_nodes.is_empty(),
+            "hidden device should not appear as node"
+        );
+    }
+
+    #[test]
+    fn test_get_topology_edges_grouped_by_protocol() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        upsert_device(&conn, &d1).unwrap();
+
+        insert_recent_flow(
+            &conn,
+            "f1",
+            "192.168.1.10",
+            "8.8.8.8",
+            "DNS",
+            Some("dns.google"),
+            100,
+            200,
+        );
+        insert_recent_flow(
+            &conn,
+            "f2",
+            "192.168.1.10",
+            "8.8.4.4",
+            "DNS",
+            Some("dns.google"),
+            150,
+            250,
+        );
+        insert_recent_flow(
+            &conn,
+            "f3",
+            "192.168.1.10",
+            "17.0.0.1",
+            "TLS",
+            Some("dns.google"),
+            1000,
+            2000,
+        );
+
+        let (_, edges) = get_topology(&conn, 3600).unwrap();
+        // DNS flows to dns.google should merge into one edge, TLS is separate
+        let dns_edges: Vec<_> = edges
+            .iter()
+            .filter(|e| e.protocol == "DNS" && e.target == "svc:dns.google")
+            .collect();
+        assert_eq!(dns_edges.len(), 1, "DNS edges to same service should merge");
+        assert_eq!(dns_edges[0].bytes, 700, "merged DNS edge should sum bytes");
+    }
+
+    #[test]
+    fn test_get_topology_router_node_type() {
+        let conn = setup();
+        let mut d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.1"));
+        d1.device_type = "Router".to_string();
+        upsert_device(&conn, &d1).unwrap();
+
+        let (nodes, _) = get_topology(&conn, 3600).unwrap();
+        let router = nodes
+            .iter()
+            .find(|n| n.id == "dev:aa:bb:cc:00:00:01")
+            .unwrap();
+        assert_eq!(router.node_type, "router");
+    }
+
+    // --- Device stats tests ---
+
+    #[test]
+    fn test_get_device_stats_totals() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        let id = upsert_device(&conn, &d1).unwrap();
+
+        insert_recent_flow(
+            &conn,
+            "f1",
+            "192.168.1.10",
+            "8.8.8.8",
+            "DNS",
+            None,
+            100,
+            200,
+        );
+        insert_recent_flow(
+            &conn,
+            "f2",
+            "192.168.1.10",
+            "1.1.1.1",
+            "TLS",
+            None,
+            5000,
+            10000,
+        );
+
+        let stats = get_device_stats(&conn, id).unwrap();
+        assert_eq!(stats.device_id, id);
+        assert_eq!(stats.total_bytes_sent, 5100);
+        assert_eq!(stats.total_bytes_received, 10200);
+        assert_eq!(stats.flow_count, 2);
+    }
+
+    #[test]
+    fn test_get_device_stats_protocol_breakdown() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        let id = upsert_device(&conn, &d1).unwrap();
+
+        insert_recent_flow(
+            &conn,
+            "f1",
+            "192.168.1.10",
+            "8.8.8.8",
+            "DNS",
+            None,
+            100,
+            200,
+        );
+        insert_recent_flow(
+            &conn,
+            "f2",
+            "192.168.1.10",
+            "1.1.1.1",
+            "TLS",
+            None,
+            5000,
+            10000,
+        );
+
+        let stats = get_device_stats(&conn, id).unwrap();
+        assert_eq!(stats.protocol_breakdown.len(), 2);
+        // TLS should be first (most bytes)
+        assert_eq!(stats.protocol_breakdown[0].protocol, "TLS");
+        assert!(stats.protocol_breakdown[0].percentage > 90.0);
+    }
+
+    #[test]
+    fn test_get_device_stats_empty() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        let id = upsert_device(&conn, &d1).unwrap();
+
+        let stats = get_device_stats(&conn, id).unwrap();
+        assert_eq!(stats.flow_count, 0);
+        assert_eq!(stats.total_bytes_sent, 0);
+        assert!(stats.protocol_breakdown.is_empty());
+    }
+
+    #[test]
+    fn test_get_device_stats_counts_as_dst() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        let d2 = make_device("aa:bb:cc:00:00:02", Some("192.168.1.20"));
+        let id1 = upsert_device(&conn, &d1).unwrap();
+        upsert_device(&conn, &d2).unwrap();
+
+        // d2 sends to d1 — d1 is dst
+        insert_recent_flow(
+            &conn,
+            "f1",
+            "192.168.1.20",
+            "192.168.1.10",
+            "TCP",
+            None,
+            500,
+            300,
+        );
+
+        let stats = get_device_stats(&conn, id1).unwrap();
+        assert_eq!(
+            stats.flow_count, 1,
+            "device should appear in stats as dst too"
+        );
+    }
+
+    // --- History query tests ---
+
+    #[test]
+    fn test_query_history_returns_recent() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        upsert_device(&conn, &d1).unwrap();
+
+        insert_recent_flow(
+            &conn,
+            "f1",
+            "192.168.1.10",
+            "8.8.8.8",
+            "DNS",
+            Some("dns.google"),
+            100,
+            200,
+        );
+
+        let results = query_history(
+            &conn,
+            None,
+            "2020-01-01 00:00:00",
+            "2099-12-31 23:59:59",
+            100,
+        )
+        .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["flow_key"], "f1");
+    }
+
+    #[test]
+    fn test_query_history_filters_by_device() {
+        let conn = setup();
+        let d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        let d2 = make_device("aa:bb:cc:00:00:02", Some("192.168.1.20"));
+        let id1 = upsert_device(&conn, &d1).unwrap();
+        upsert_device(&conn, &d2).unwrap();
+
+        insert_recent_flow(
+            &conn,
+            "f1",
+            "192.168.1.10",
+            "8.8.8.8",
+            "DNS",
+            None,
+            100,
+            200,
+        );
+        insert_recent_flow(
+            &conn,
+            "f2",
+            "192.168.1.20",
+            "1.1.1.1",
+            "TLS",
+            None,
+            500,
+            1000,
+        );
+
+        let results = query_history(
+            &conn,
+            Some(id1),
+            "2020-01-01 00:00:00",
+            "2099-12-31 23:59:59",
+            100,
+        )
+        .unwrap();
+        assert_eq!(results.len(), 1, "should only return flows for device 1");
+        assert_eq!(results[0]["flow_key"], "f1");
+    }
+
+    #[test]
+    fn test_query_history_respects_time_range() {
+        let conn = setup();
+        // Insert one old flow and one recent
+        conn.execute(
+            "INSERT INTO flow_summaries
+                (flow_key, src_ip, dst_ip, protocol, bytes_sent, bytes_received,
+                 packet_count, first_seen, last_seen)
+             VALUES ('old', '1.1.1.1', '2.2.2.2', 'TCP', 100, 200, 5,
+                     '2020-06-15 00:00:00', '2020-06-15 00:00:00')",
+            [],
+        )
+        .unwrap();
+        insert_recent_flow(&conn, "recent", "1.1.1.1", "3.3.3.3", "DNS", None, 50, 50);
+
+        let results = query_history(
+            &conn,
+            None,
+            "2020-06-01 00:00:00",
+            "2020-07-01 00:00:00",
+            100,
+        )
+        .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["flow_key"], "old");
+    }
+
+    #[test]
+    fn test_query_history_respects_limit() {
+        let conn = setup();
+        for i in 0..10 {
+            insert_recent_flow(
+                &conn,
+                &format!("f{}", i),
+                "1.1.1.1",
+                "2.2.2.2",
+                "TCP",
+                None,
+                100,
+                100,
+            );
+        }
+
+        let results =
+            query_history(&conn, None, "2020-01-01 00:00:00", "2099-12-31 23:59:59", 3).unwrap();
+        assert_eq!(results.len(), 3, "should respect limit");
+    }
+
+    #[test]
+    fn test_query_history_joins_device_info() {
+        let conn = setup();
+        let mut d1 = make_device("aa:bb:cc:00:00:01", Some("192.168.1.10"));
+        d1.display_name = Some("My iPhone".to_string());
+        upsert_device(&conn, &d1).unwrap();
+
+        insert_recent_flow(
+            &conn,
+            "f1",
+            "192.168.1.10",
+            "8.8.8.8",
+            "DNS",
+            None,
+            100,
+            200,
+        );
+
+        let results = query_history(
+            &conn,
+            None,
+            "2020-01-01 00:00:00",
+            "2099-12-31 23:59:59",
+            100,
+        )
+        .unwrap();
+        assert_eq!(results[0]["src_device"]["display_name"], "My iPhone");
+        assert_eq!(results[0]["src_device"]["mac_address"], "aa:bb:cc:00:00:01");
     }
 }
