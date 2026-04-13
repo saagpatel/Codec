@@ -214,4 +214,99 @@ mod tests {
         assert_eq!(device.device_type, "Mac");
         assert_eq!(device.icon, "laptop");
     }
+
+    #[test]
+    fn infer_smart_tv_from_hostname_and_manufacturer() {
+        let (dt, icon) = infer_device_type(Some("Samsung Electronics"), Some("samsung-tv.local"));
+        assert_eq!(dt, "SmartTV");
+        assert_eq!(icon, "tv");
+    }
+
+    #[test]
+    fn infer_smart_tv_lg_with_tv_hostname() {
+        let (dt, icon) = infer_device_type(Some("LG Electronics"), Some("my-tv.local"));
+        assert_eq!(dt, "SmartTV");
+        assert_eq!(icon, "tv");
+    }
+
+    #[test]
+    fn infer_amazon_iot() {
+        let (dt, icon) = infer_device_type(Some("Amazon Technologies Inc."), None);
+        assert_eq!(dt, "IoT");
+        assert_eq!(icon, "speaker");
+    }
+
+    #[test]
+    fn infer_google_nest() {
+        let (dt, icon) = infer_device_type(Some("Nest Labs Inc."), None);
+        assert_eq!(dt, "IoT");
+        assert_eq!(icon, "speaker");
+    }
+
+    #[test]
+    fn infer_sonos_speaker() {
+        let (dt, icon) = infer_device_type(Some("Sonos, Inc."), None);
+        assert_eq!(dt, "IoT");
+        assert_eq!(icon, "speaker");
+    }
+
+    #[test]
+    fn infer_ubiquiti_router() {
+        let (dt, icon) = infer_device_type(Some("Ubiquiti Inc."), None);
+        assert_eq!(dt, "Router");
+        assert_eq!(icon, "router");
+    }
+
+    #[test]
+    fn enrich_device_does_not_override_known_type() {
+        let mut db = HashMap::new();
+        db.insert([0xAA, 0xBB, 0xCC], "Apple, Inc.".to_string());
+
+        let mut device = crate::models::DeviceEntry {
+            mac_address: "aa:bb:cc:dd:ee:ff".to_string(),
+            ip_address: None,
+            hostname: None,
+            oui_manufacturer: None,
+            device_type: "Router".to_string(), // already classified
+            display_name: None,
+            icon: "router".to_string(),
+            is_visible: true,
+        };
+
+        enrich_device(&db, &mut device);
+        // device_type should remain "Router" — enrich_device only overrides "Unknown"
+        assert_eq!(device.device_type, "Router");
+        assert_eq!(device.icon, "router");
+    }
+
+    #[test]
+    fn enrich_device_preserves_existing_manufacturer() {
+        let db: HashMap<[u8; 3], String> = HashMap::new();
+
+        let mut device = crate::models::DeviceEntry {
+            mac_address: "aa:bb:cc:dd:ee:ff".to_string(),
+            ip_address: None,
+            hostname: None,
+            oui_manufacturer: Some("My Custom OUI".to_string()),
+            device_type: "Unknown".to_string(),
+            display_name: None,
+            icon: "device".to_string(),
+            is_visible: true,
+        };
+
+        enrich_device(&db, &mut device);
+        // oui_manufacturer was already set — should not be overwritten with None
+        assert_eq!(device.oui_manufacturer.as_deref(), Some("My Custom OUI"));
+    }
+
+    #[test]
+    fn lookup_manufacturer_uppercase_mac() {
+        let mut db = HashMap::new();
+        db.insert([0xA4, 0xB1, 0xC1], "Apple, Inc.".to_string());
+        // MAC with uppercase hex digits
+        assert_eq!(
+            lookup_manufacturer(&db, "A4:B1:C1:DD:EE:FF"),
+            Some("Apple, Inc.".to_string())
+        );
+    }
 }

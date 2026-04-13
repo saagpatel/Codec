@@ -170,4 +170,80 @@ mod tests {
             .unwrap();
         assert_eq!(version, 1);
     }
+
+    #[test]
+    fn test_init_db_called_twice_does_not_increment_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let _conn1 = init_db(&db_path).unwrap();
+        let conn2 = init_db(&db_path).unwrap();
+
+        let version: u32 = conn2
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 1, "version should remain 1 after second init");
+    }
+
+    #[test]
+    fn test_foreign_key_constraint_on_flow_summaries() {
+        let conn = open_memory();
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+            .unwrap();
+        create_schema(&conn).unwrap();
+
+        // Attempting to insert a flow referencing a non-existent device should fail
+        let result = conn.execute(
+            "INSERT INTO flow_summaries
+                (flow_key, src_ip, dst_ip, protocol, bytes_sent, bytes_received,
+                 packet_count, first_seen, last_seen, src_device_id)
+             VALUES ('fk-test', '1.2.3.4', '5.6.7.8', 'TCP', 0, 0, 0,
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 99999)",
+            [],
+        );
+        assert!(result.is_err(), "foreign key violation should be rejected");
+    }
+
+    #[test]
+    fn test_devices_mac_uniqueness() {
+        let conn = open_memory();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        create_schema(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO devices (mac_address) VALUES ('aa:bb:cc:dd:ee:ff')",
+            [],
+        )
+        .unwrap();
+        let result = conn.execute(
+            "INSERT INTO devices (mac_address) VALUES ('aa:bb:cc:dd:ee:ff')",
+            [],
+        );
+        assert!(result.is_err(), "duplicate MAC address should be rejected");
+    }
+
+    #[test]
+    fn test_expected_indexes_exist() {
+        let conn = open_memory();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        create_schema(&conn).unwrap();
+
+        let expected_indexes = [
+            "idx_device_mac",
+            "idx_device_ip",
+            "idx_flow_last_seen",
+            "idx_flow_device",
+            "idx_flow_key",
+        ];
+
+        for idx in &expected_indexes {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                    rusqlite::params![idx],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "index '{idx}' should exist");
+        }
+    }
 }

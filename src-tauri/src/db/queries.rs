@@ -931,6 +931,56 @@ mod tests {
     }
 
     #[test]
+    fn test_ms_to_iso_epoch() {
+        // 0ms = 1970-01-01 00:00:00
+        assert_eq!(ms_to_iso(0), "1970-01-01 00:00:00");
+    }
+
+    #[test]
+    fn test_ms_to_iso_known_timestamp() {
+        // 2023-11-14 22:13:20 UTC = 1700000000 seconds = 1700000000000 ms
+        assert_eq!(ms_to_iso(1_700_000_000_000), "2023-11-14 22:13:20");
+    }
+
+    #[test]
+    fn test_ms_to_iso_negative_clamped_to_epoch() {
+        // Negative timestamps clamp to epoch
+        assert_eq!(ms_to_iso(-1000), "1970-01-01 00:00:00");
+    }
+
+    #[test]
+    fn test_days_in_month_leap_year() {
+        assert_eq!(days_in_month(2000, 2), 29); // 2000 is a leap year
+        assert_eq!(days_in_month(1900, 2), 28); // 1900 is NOT a leap year
+        assert_eq!(days_in_month(2024, 2), 29); // 2024 is a leap year
+    }
+
+    #[test]
+    fn test_days_in_month_standard() {
+        assert_eq!(days_in_month(2023, 1), 31);
+        assert_eq!(days_in_month(2023, 4), 30);
+        assert_eq!(days_in_month(2023, 12), 31);
+    }
+
+    #[test]
+    fn test_is_leap_century_rules() {
+        assert!(is_leap(2000)); // divisible by 400 → leap
+        assert!(!is_leap(1900)); // divisible by 100 but not 400 → not leap
+        assert!(is_leap(2024)); // divisible by 4, not 100 → leap
+        assert!(!is_leap(2023)); // not divisible by 4 → not leap
+    }
+
+    #[test]
+    fn test_update_setting_all_allowed_keys_succeed() {
+        let conn = setup();
+        // All keys in ALLOWED_SETTINGS_KEYS must succeed
+        for key in ALLOWED_SETTINGS_KEYS {
+            let result = update_setting(&conn, key, "test-value");
+            assert!(result.is_ok(), "allowed key '{key}' should be accepted");
+        }
+    }
+
+    #[test]
     fn test_get_devices_and_flows() {
         let conn = setup();
         let device = make_device("de:ad:be:ef:00:01", Some("192.168.0.5"));
