@@ -3,7 +3,7 @@ members = ["helper"]
 
 [package]
 name = "codec"
-version = "0.1.0"
+version = "1.0.0"
 description = "Network traffic awareness for your home subnet"
 edition = "2021"
 
