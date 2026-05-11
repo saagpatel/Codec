@@ -1,0 +1,4 @@
+# codex-os-managed
+npm install
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
