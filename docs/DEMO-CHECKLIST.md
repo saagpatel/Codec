@@ -61,14 +61,15 @@ prior crashed run left junk, `rm -rf /tmp/codec-test-*`.
 
 ```bash
 cd /Users/d/Projects/Codec
-pnpm install              # one-time per clean checkout
-pnpm build
+npm install              # one-time per clean checkout
+npm run build
 ```
 
 **Expected:** Vite output in `dist/` with no TypeScript errors. Bundle includes the
 topology graph, conversation view, device panel, and history panel.
 
 **If it fails:**
+- `npm install` should match the canonical `.codex/verify.commands` gate.
 - `pnpm install --frozen-lockfile` to verify lockfile parity.
 - If types fail, `pnpm run dev` shows live errors with file:line citations.
 
@@ -81,19 +82,19 @@ Tauri app does NOT run as root — that's the security boundary.
 
 ```bash
 cd /Users/d/Projects/Codec/src-tauri
-cargo build --release --bin codec-helper
-# Install LaunchDaemon (admin password required)
-sudo cp target/release/codec-helper /usr/local/sbin/
-sudo cp resources/io.codec.helper.plist /Library/LaunchDaemons/
-sudo launchctl load -w /Library/LaunchDaemons/io.codec.helper.plist
+cargo build -p codec-helper
+
+cd /Users/d/Projects/Codec
+# Run the installer from an administrator shell.
+./scripts/install-helper.sh
 ```
 
-**Expected:** `launchctl list | grep io.codec.helper` shows the daemon as running
+**Expected:** `launchctl list | grep com.codec.helper` shows the daemon as running
 (PID, not status code 0 alone).
 
 **If it fails:**
-- `sudo launchctl bootout system /Library/LaunchDaemons/io.codec.helper.plist` then
-  reload to reset state.
+- Run `scripts/uninstall-helper.sh` from an administrator shell, then re-run
+  `scripts/install-helper.sh` to reset state.
 - Check `Console.app` for `codec-helper` log lines — common errors are missing
   pcap permission or wrong interface name.
 
@@ -192,7 +193,7 @@ grep -i csp /Users/d/Projects/Codec/src-tauri/tauri.conf.json
 
 ```bash
 # Quit the Tauri app (Cmd-Q)
-sudo launchctl unload /Library/LaunchDaemons/io.codec.helper.plist
+./scripts/uninstall-helper.sh
 ls /tmp/codec-helper.sock     # should be gone
 ```
 
@@ -222,3 +223,21 @@ This checklist mirrors the build proof captured at commits:
 - `7d91b77` — frontend: topology + device panel + history panel
 
 If a step regresses, bisect against these commits.
+
+## Fresh proof log
+
+Use this section for the latest handoff-ready evidence.
+
+- Local baseline gate: run `.codex/verify.commands` from the repo root and record
+  the date plus result.
+- Privileged helper gate: run Steps 4-6 on the demo Mac with admin approval and
+  record whether `com.codec.helper`, `/tmp/codec-helper.sock`, and the Tauri
+  `helper_client: connected` log were observed.
+- Live subnet gate: leave capture running for at least 60 seconds, then record
+  whether Device Panel, Conversation View, Topology View, and History Panel all
+  received fresh data.
+- Boundary check: record the Step 8 result before calling the demo ready.
+
+Latest Codex pass: local build/test baseline can be verified without elevation;
+privileged helper install and live subnet capture still require an operator-run
+administrator session on the target Mac.
