@@ -2,7 +2,7 @@
 
 ## Communication Contract
 
-Follow the global Codex communication contract. Keep updates short, beginner-friendly, and focused on what changed, what passed, and what still needs attention.
+Follow the global Codex communication contract. Keep updates short, PM-readable, operator-grade, and focused on what changed, what passed, and what still needs attention.
 
 ## Project Goal
 
