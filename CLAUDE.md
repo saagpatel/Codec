@@ -12,7 +12,7 @@ macOS desktop app that captures home-network traffic and renders it as a convers
 - D3.js 7.x — force simulation for topology graph, raw (no wrapper library)
 - Zustand 4.x — frontend state for live flows and device registry
 - libpcap via `pcap` crate 2.x — packet capture
-- pnet 0.34 — raw sockets for ARP spoofing
+- pnet 0.35 — raw sockets for ARP spoofing
 - Tailwind CSS 3.x — utility classes only
 
 ## Build / Test / Run
@@ -66,7 +66,7 @@ Codec is a macOS desktop app that captures all traffic on the local home network
 
 ## Current State
 
-**Phase 0: Capture Engine + Privileged Helper**
+**Phases 0–2 complete.** Capture engine (libpcap + ARP spoofing), backend persistence (SQLite, OUI registry, all protocol decoders), and full UI (conversation timeline, topology graph, history panel, device panel, status bar) are all implemented. Phase 3 (onboarding wizard, anomaly detection, macOS menu bar) is not yet started.
 See IMPLEMENTATION-ROADMAP.md for full phase details, tasks, and acceptance criteria.
 
 ## Stack
@@ -79,7 +79,7 @@ See IMPLEMENTATION-ROADMAP.md for full phase details, tasks, and acceptance crit
 - D3.js: 7.x — force simulation for topology graph, raw (no wrapper library)
 - Zustand: 4.x — frontend state for live flows and device registry
 - libpcap via `pcap` crate: 2.x — packet capture
-- pnet: 0.34 — raw sockets for ARP spoofing
+- pnet: 0.35 — raw sockets for ARP spoofing
 - Tailwind CSS: 3.x — all styling, utility classes only
 
 ## How To Run
