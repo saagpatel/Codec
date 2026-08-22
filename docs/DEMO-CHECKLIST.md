@@ -29,7 +29,7 @@ or `xcode-select --install`.
 ## 1. Build the Rust workspace
 
 ```bash
-cd /Users/d/Projects/Codec/src-tauri
+cd ~/Projects/Codec/src-tauri
 cargo check --workspace
 ```
 
@@ -45,7 +45,7 @@ last green commit).
 ## 2. Run baseline Rust tests
 
 ```bash
-cd /Users/d/Projects/Codec/src-tauri
+cd ~/Projects/Codec/src-tauri
 cargo test --workspace
 ```
 
@@ -60,7 +60,7 @@ prior crashed run left junk, `rm -rf /tmp/codec-test-*`.
 ## 3. Build the React frontend
 
 ```bash
-cd /Users/d/Projects/Codec
+cd ~/Projects/Codec
 npm install              # one-time per clean checkout
 npm run build
 ```
@@ -81,10 +81,10 @@ The helper is a separate binary that runs as root via a LaunchDaemon. The main
 Tauri app does NOT run as root — that's the security boundary.
 
 ```bash
-cd /Users/d/Projects/Codec/src-tauri
+cd ~/Projects/Codec/src-tauri
 cargo build -p codec-helper
 
-cd /Users/d/Projects/Codec
+cd ~/Projects/Codec
 # Run the installer from an administrator shell.
 ./scripts/install-helper.sh
 ```
@@ -117,7 +117,7 @@ nc -U /tmp/codec-helper.sock < /dev/null | head -1
 ## 6. Start the Tauri app in dev mode
 
 ```bash
-cd /Users/d/Projects/Codec
+cd ~/Projects/Codec
 pnpm tauri dev
 ```
 
@@ -183,7 +183,7 @@ sqlite3 ~/.codec/codec.db "SELECT name FROM sqlite_master WHERE type='table';"
 # Expected: flow_summaries, devices, settings — NOT a 'packets' or 'payloads' table
 
 # 4. Content Security Policy is strict
-grep -i csp /Users/d/Projects/Codec/src-tauri/tauri.conf.json
+grep -i csp ~/Projects/Codec/src-tauri/tauri.conf.json
 # Expected: a Content-Security-Policy field (added in commit b31edd0)
 ```
 
