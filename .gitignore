@@ -26,3 +26,6 @@ dist-ssr
 .claire/
 .serena/
 CLAUDE.md.bak
+
+# Release artifacts (rebuildable; kept out of the tree)
+*.dmg
