@@ -13,7 +13,7 @@
 	"dependencies": {
 		"@tauri-apps/api": "^2",
 		"d3": "^7.9.0",
-		"lucide-react": "1.31.0",
+		"lucide-react": "1.35.0",
 		"react": "^19.2.8",
 		"react-dom": "^19.2.8",
 		"zustand": "5.0.15"
@@ -23,13 +23,13 @@
 		"@tauri-apps/cli": "^2",
 		"@types/d3": "^7.4.3",
 		"@types/react": "^19.2.18",
-		"@types/react-dom": "^19.2.4",
-		"@vitejs/plugin-react": "^6.0.5",
+		"@types/react-dom": "^19.2.5",
+		"@vitejs/plugin-react": "^6.1.1",
 		"autoprefixer": "^10.5.4",
 		"postcss": "^8.5.26",
 		"tailwindcss": "4.3.3",
 		"typescript": "~7.0.2",
-		"vite": "8.2.1"
+		"vite": "8.2.2"
 	},
 	"overrides": {
 		"@babel/core": "7.29.6"
