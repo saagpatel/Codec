@@ -20,7 +20,7 @@ Codec captures traffic on your local home network subnet and presents it as two 
 
 ### Prerequisites
 - Rust stable toolchain
-- Node.js 20.19+ or 22.12+ and npm
+- Node.js `^20.19.0 || >=22.12.0` (locked Vite engine requirement) and npm
 - macOS (uses pcap + privileged network helper)
 
 ### Installation
@@ -42,9 +42,12 @@ npm run tauri build
 ## Verification
 
 Run from the repository root on macOS with Rust stable, developer tools,
-libpcap for the helper, and Node.js 20.19+ or 22.12+ (the locked Vite engine
+libpcap for the helper, and Node.js `^20.19.0 || >=22.12.0` (the locked Vite engine
 requirement). The canonical local commands are in
-[`.codex/verify.commands`](.codex/verify.commands):
+[`.codex/verify.commands`](.codex/verify.commands).
+
+Use npm with `package-lock.json`: the Makefile and Tauri build hooks also use
+npm. `pnpm-lock.yaml` is tracked too; no package-manager version is pinned.
 
 ```bash
 npm ci
@@ -76,10 +79,11 @@ scoped evidence. Preserve existing device/flow databases.
 | Layer | Technology |
 |-------|------------|
 | Desktop shell | Tauri 2 |
-| Backend | Rust 2021 — tokio, rusqlite, privileged helper |
-| Frontend | React 18 + TypeScript 5 + Tailwind CSS 3 + Zustand 4 |
-| Graph | D3 force-directed layout |
-| Persistence | SQLite (bundled rusqlite) |
+| Backend | Rust stable, edition 2021 — tokio 1, privileged helper; no declared minimum Rust version |
+| Frontend | React 19 + TypeScript 7 (strict) + Tailwind CSS 4 + Zustand 5 |
+| Graph | D3 7 force-directed layout |
+| Persistence | SQLite (bundled rusqlite 0.31) |
+| Capture helper | libpcap via pcap 2, pnet 0.35 |
 
 ## License
 
