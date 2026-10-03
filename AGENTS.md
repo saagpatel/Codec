@@ -35,7 +35,9 @@ Codec is a macOS Tauri 2 app for local home-network awareness. It captures local
 
 ## Verification
 
-Use `.codex/verify.commands` as the canonical local gate. Current session note: Rust tests pass, while JavaScript build requires Node dependencies to be installed first.
+Use `.codex/verify.commands` as the canonical local gate, run from the repository root. It installs dependencies with npm using `package-lock.json`, builds the frontend (including TypeScript checking), and runs locked Rust tests using `src-tauri/Cargo.toml`.
+
+The Makefile and Tauri build hooks also use npm; `pnpm-lock.yaml` is additionally tracked, but no package-manager version is pinned. See `README.md` for current prerequisites and optional Rust checks. `npm test` is a placeholder; no JavaScript lint/format script is configured. Record fresh check results rather than relying on a prior session's status.
 
 ## Done Criteria
 

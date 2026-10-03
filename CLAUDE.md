@@ -5,23 +5,28 @@ macOS desktop app that captures home-network traffic and renders it as a convers
 ## Stack
 
 - Tauri 2.x — desktop shell, IPC bridge between Rust and React
-- React 18.x — hooks-based frontend, no class components
-- TypeScript 5.x strict mode — all shared types in `src/types/index.ts`
-- Rust 1.78+ — two binaries: `codec` (main Tauri process) and `codec-helper` (privileged capture)
+- React 19.x — hooks-based frontend, no class components
+- TypeScript 7.x strict mode — all shared types in `src/types/index.ts`
+- Rust stable, edition 2021 — two binaries: `codec` (main Tauri process) and `codec-helper` (privileged capture); no minimum Rust version is declared
 - SQLite via rusqlite 0.31 (bundled) — local history at `~/.codec/codec.db`
 - D3.js 7.x — force simulation for topology graph, raw (no wrapper library)
-- Zustand 4.x — frontend state for live flows and device registry
+- Zustand 5.x — frontend state for live flows and device registry
 - libpcap via `pcap` crate 2.x — packet capture
 - pnet 0.35 — raw sockets for ARP spoofing
-- Tailwind CSS 3.x — utility classes only
+- Tailwind CSS 4.x — utility classes only
 
 ## Build / Test / Run
 
 See IMPLEMENTATION-ROADMAP.md for phase-by-phase tasks and acceptance criteria.
 
+Run commands from the repository root. Use npm with `package-lock.json`, as in
+the Makefile, Tauri build hooks and `.codex/verify.commands`. The repository also
+tracks `pnpm-lock.yaml`, but does not pin a package-manager version. See README.md
+for prerequisites and the canonical install, build and test commands.
+
 Run `clippy` before each phase commit:
 ```
-cargo clippy
+cargo clippy --locked --manifest-path src-tauri/Cargo.toml --workspace -- -D warnings
 ```
 
 Unit tests required for all Rust decoders and all TypeScript formatters before phase completion.
@@ -72,15 +77,15 @@ See IMPLEMENTATION-ROADMAP.md for full phase details, tasks, and acceptance crit
 ## Stack
 
 - Tauri: 2.x — desktop shell, IPC bridge between Rust and React
-- React: 18.x — hooks-based frontend, no class components
-- TypeScript: 5.x strict mode — all shared types in `src/types/index.ts`
-- Rust: 1.78+ — two binaries: `codec` (main Tauri process) and `codec-helper` (privileged capture)
+- React: 19.x — hooks-based frontend, no class components
+- TypeScript: 7.x strict mode — all shared types in `src/types/index.ts`
+- Rust: stable, edition 2021 — two binaries: `codec` (main Tauri process) and `codec-helper` (privileged capture); no minimum Rust version is declared
 - SQLite via rusqlite: 0.31 (bundled) — local history at `~/.codec/codec.db`
 - D3.js: 7.x — force simulation for topology graph, raw (no wrapper library)
-- Zustand: 4.x — frontend state for live flows and device registry
+- Zustand: 5.x — frontend state for live flows and device registry
 - libpcap via `pcap` crate: 2.x — packet capture
 - pnet: 0.35 — raw sockets for ARP spoofing
-- Tailwind CSS: 3.x — all styling, utility classes only
+- Tailwind CSS: 4.x — all styling, utility classes only
 
 ## How To Run
 
